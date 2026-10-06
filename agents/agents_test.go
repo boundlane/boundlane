@@ -111,6 +111,31 @@ func TestArgv(t *testing.T) {
 	}
 }
 
+func TestDefaultFlags(t *testing.T) {
+	claude, err := Get("claude")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := claude.CommandLine(nil); !reflect.DeepEqual(got, []string{"claude", "--permission-mode", "manual"}) {
+		t.Errorf("default: %q", got)
+	}
+	for _, args := range [][]string{{"--permission-mode", "auto"}, {"--permission-mode=auto"}} {
+		got := claude.Argv(args)
+		n := 0
+		for _, a := range got {
+			if strings.HasPrefix(a, "--permission-mode") {
+				n++
+			}
+		}
+		if n != 1 || got[len(got)-1] != args[len(args)-1] {
+			t.Errorf("%q: the user's mode must replace the default, got %q", args, got)
+		}
+	}
+	if claude.StartNote == "" {
+		t.Error("claude needs the note about the API key prompt")
+	}
+}
+
 func TestTOMLString(t *testing.T) {
 	for in, want := range map[string]string{
 		`plain`:           `"plain"`,

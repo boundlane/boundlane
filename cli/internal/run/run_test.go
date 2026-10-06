@@ -126,7 +126,7 @@ func TestRunSequence(t *testing.T) {
 		"settings set bl-test-0001 --key agent_policy_proposals_enabled --value true",
 		"sandbox upload bl-test-0001 " + h.opts.Repo,
 		"logs bl-test-0001 --source sandbox -n 1000",
-		"sandbox exec -n bl-test-0001 --tty --workdir " + project + " --env CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1 -- claude --append-system-prompt " + agents.Guide + " --model x",
+		"sandbox exec -n bl-test-0001 --tty --workdir " + project + " --env CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1 -- claude --permission-mode manual --append-system-prompt " + agents.Guide + " --model x",
 		"logs bl-test-0001 --source sandbox -n 100000",
 		"sandbox download bl-test-0001 " + project + " ",
 		"sandbox delete bl-test-0001",

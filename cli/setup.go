@@ -749,7 +749,7 @@ func setupAfter(u *tui.UI) {
 	u.Blank()
 	u.Println("  " + u.Bold("When it exits"))
 	u.Blank()
-	u.Note("Boundlane asks whether to keep the sandbox running. Keeping it leaves the session and its approvals in place; boundlane connect opens the agent again, and boundlane stop ends it. It also shows what the agent changed and asks before anything is copied into your folder.")
+	u.Note("Boundlane shows what the agent changed and asks before anything is copied into your folder. Then it asks whether to keep the sandbox running. Keeping it leaves the session and its approvals in place; boundlane connect opens the agent again, and boundlane stop ends it.")
 	if p := os.Getenv("BOUNDLANE_PATH_PROFILE"); p != "" && !onPath() {
 		u.Blank()
 		u.Note("The installer added boundlane to PATH in " + p + ". Open a new terminal, or run this, so the current one finds it:")

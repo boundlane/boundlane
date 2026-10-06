@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -123,6 +124,28 @@ func TestApplyKeepsChangesUnlessYes(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(repo, "old.txt")); err == nil {
 		t.Error("old.txt was not removed")
+	}
+
+	// The sandbox may still run. Its snapshot now matches what was applied,
+	// so a later stop compares against that instead of finding nothing.
+	dirs, _ := config.Default()
+	base, err := workspace.Load(filepath.Join(dirs.Staging(sandboxName), "base.json"))
+	if err != nil {
+		t.Fatalf("the snapshot is gone after apply: %v", err)
+	}
+	now, err := workspace.Snapshot(repo, workspace.All)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(base, now) {
+		t.Errorf("snapshot after apply = %v, want the applied folder %v", base, now)
+	}
+	if _, err := os.Stat(filepath.Join(dirs.Staging(sandboxName), "files")); err == nil {
+		t.Error("the applied copy is still staged")
+	}
+	out, code = runCLI(t, "", "apply", "--sandbox", sandboxName)
+	if code != 1 || !strings.Contains(out, "its changes were applied") {
+		t.Errorf("apply again: exit %d:\n%s", code, out)
 	}
 }
 

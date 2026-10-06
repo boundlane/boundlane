@@ -53,6 +53,75 @@ func TestParseRules(t *testing.T) {
 	}
 }
 
+// Recorded from OpenShell 0.1.2: a request a Claude Code session filed
+// through policy.local, then drafts the supervisor made from refusals. The
+// host the agent asked for is replaced with example.com.
+const recordedMixed = `  Chunk: ccd96a39-17bd-4710-af49-c88725b0540f
+  Status: pending
+  Rule: example_home_read
+  Binary: /usr/bin/curl
+  Confidence: 75%
+  Rationale: User asked to see what is on the example.com homepage. Need a single read-only GET of the homepage with curl.
+  Prover: prover: no new findings
+  Candidate: 4dea2e771f03
+  Endpoints: www.example.com:443 [L7 rest, allow GET /]
+  Binaries: /usr/bin/curl
+
+  Chunk: 59b83e6d-8a8a-43e4-a597-066a5d16fc36
+  Status: pending
+  Rule: allow_github_com_443
+  Binary: /usr/lib/git-core/git-remote-http
+  Confidence: 65%
+  Rationale: Allow git-remote-http to connect to github.com:443 (HTTPS).
+  Prover: prover: no new findings
+  Candidate: 1fd6084bd0f7
+  Endpoints: github.com:443 [L4]
+  Binaries: /usr/lib/git-core/git-remote-http
+
+  Chunk: 7682170e-0b75-4850-9a03-f5c98a3713be
+  Status: pending
+  Rule: allow_downloads_claude_ai_443
+  Binary: /usr/local/lib/node_modules/@anthropic-ai/claude-code/bin/claude.exe
+  Confidence: 65%
+  Rationale: Allow claude.exe to connect to downloads.claude.ai:443 (HTTPS).
+  Prover: prover: no new findings
+  Candidate: a6239bd33512
+  Endpoints: downloads.claude.ai:443 [L4]
+  Binaries: /usr/local/lib/node_modules/@anthropic-ai/claude-code/bin/claude.exe
+`
+
+func TestDrafted(t *testing.T) {
+	list := ParseRules([]byte(recordedMixed))
+	if len(list) != 3 {
+		t.Fatalf("got %d proposals", len(list))
+	}
+	if list[0].Drafted() {
+		t.Error("the agent's own request was taken for a draft")
+	}
+	for _, p := range list[1:] {
+		if !p.Drafted() {
+			t.Errorf("%s: a supervisor draft was taken for the agent's request", p.Rule)
+		}
+	}
+	for _, p := range ParseRules([]byte(recordedRules)) {
+		if !p.Drafted() {
+			t.Errorf("%s: the first recording's drafts must read as drafts", p.Rule)
+		}
+	}
+}
+
+func TestAgentFiled(t *testing.T) {
+	// Recorded from a Codex session on OpenShell 0.1.2; the host is replaced.
+	log := []byte(`[1791297763.974] [sandbox] [INFO ] [openshell_supervisor] Flushed denial analysis to gateway proposals=1 sandbox_name=bl-mouse-keepe-a3a6 summaries=1
+[1791297778.239] [sandbox] [OCSF ] [ocsf] CONFIG:PROPOSED [INFO] agent_authored proposal chunk:fad7c2ed-3aca-4fb7-bb37-495820dd7562 on example.com:443 HEAD / by /usr/bin/curl
+[1791297802.289] [sandbox] [OCSF ] [ocsf] CONFIG:APPROVED [INFO] chunk:fad7c2ed-3aca-4fb7-bb37-495820dd7562 approved on example.com:443 HEAD / by /usr/bin/curl
+`)
+	ids := AgentFiled(log)
+	if len(ids) != 1 || !ids["fad7c2ed-3aca-4fb7-bb37-495820dd7562"] {
+		t.Errorf("ids = %v", ids)
+	}
+}
+
 func TestResolveChunk(t *testing.T) {
 	list := ParseRules([]byte(recordedRules))
 	if id, err := ResolveChunk(list, "df10"); err != nil || id != "df10f171-e5d2-41f0-b4f5-b58fa89ca326" {

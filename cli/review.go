@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 
 	"boundlane/cli/internal/config"
@@ -217,12 +218,19 @@ func (r review) apply(u *tui.UI) (int, error) {
 		u.Note("Applying would overwrite those edits, so nothing was changed. Save or undo them, then run boundlane apply" + r.flag + " again.")
 		return 1, nil
 	}
+	next, err := workspace.Applied(r.base, r.files, r.changes)
+	if err != nil {
+		return 1, err
+	}
 	if err := workspace.Apply(r.sb.Repo, r.files, r.changes); err != nil {
 		return 1, err
 	}
-	if dirs, err := config.Default(); err == nil {
-		_ = os.RemoveAll(dirs.Staging(r.sb.Name))
+	// The sandbox may keep running; its next copy is compared with what was
+	// just applied, so the snapshot stays and only the staged copy goes.
+	if err := next.Save(filepath.Join(filepath.Dir(r.files), "base.json")); err != nil {
+		return 1, err
 	}
+	_ = os.RemoveAll(r.files)
 	u.Blank()
 	u.Done("Applied", plural(len(r.changes), "file", "files")+" in "+r.folder())
 	u.Note("Your version control sees them as ordinary edits. Review or commit them as usual.")

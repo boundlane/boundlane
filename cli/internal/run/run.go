@@ -347,7 +347,10 @@ func Run(ctx context.Context, d Deps, o Options) (res Result, err error) {
 	if a.HasGuide() {
 		say("guide", "how to ask for access, added to the agent's instructions")
 	}
-	say("start", "%s", strings.Join(append([]string{a.Command}, o.Args...), " "))
+	say("start", "%s", strings.Join(a.CommandLine(o.Args), " "))
+	if a.StartNote != "" {
+		say("note", "%s", a.StartNote)
+	}
 	execErr := d.OpenShell.Exec(ctx, name, project, a.Env, a.Argv(o.Args)...)
 	if code := openshell.ExitCode(execErr); code >= 0 {
 		res.ExitCode = code
@@ -403,6 +406,7 @@ func Run(ctx context.Context, d Deps, o Options) (res Result, err error) {
 		}
 		deleted = true
 		markStopped(d.Dirs, name)
+		dropEmptyStaging(d.Dirs, name)
 		say("sandbox", "%s, deleted", name)
 	}
 	return res, nil

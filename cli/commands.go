@@ -249,6 +249,7 @@ func cmdRun(e env, args []string) (int, error) {
 		return 1, err
 	}
 	u := tui.New(e.stdin, e.stdout)
+	reviewed := false
 	res, err := run.Run(e.ctx, run.Deps{
 		OpenShell: client(),
 		Prover:    prover(),
@@ -266,12 +267,23 @@ func cmdRun(e env, args []string) (int, error) {
 				return false, nil
 			}
 			u.Title(entry.Display+" exited", sandbox)
-			u.Note("The sandbox still has this session, its files, and any approvals from this run. Keep it to come back with boundlane connect.")
-			keepIt, err := u.Confirm("Keep "+sandbox+" running?", "Keep it running", "Delete it")
+			if sb, base, files, changes, err := staged(e, sandbox); err == nil && len(changes) > 0 {
+				reviewed = true
+				if _, err := newReview(sb, base, files, changes, "").offer(e); err != nil {
+					return true, err
+				}
+				u.Blank()
+			}
+			u.Println(fmt.Sprintf("  %s %s", u.Accent("■"), u.Bold("The sandbox")))
+			u.Note("It still has this session, its files, and any approvals from this run. Keep it to come back with boundlane connect. Deleting it does not touch changes that are staged or applied.")
+			i, err := u.Select("What should happen to "+sandbox+"?", []tui.Option{
+				{Label: "Keep it running", Hint: "boundlane connect opens the agent again"},
+				{Label: "Delete it", Hint: "ends the session and its pending requests"},
+			}, 0)
 			if errors.Is(err, tui.ErrCancelled) {
 				return true, nil
 			}
-			return keepIt, err
+			return i == 0, err
 		},
 	})
 	if err != nil {
@@ -284,7 +296,7 @@ func cmdRun(e env, args []string) (int, error) {
 		)
 		u.Blank()
 	}
-	if len(res.Changes) > 0 {
+	if len(res.Changes) > 0 && !reviewed {
 		if sb, base, files, changes, err := staged(e, res.Sandbox); err == nil && len(changes) > 0 {
 			if _, err := newReview(sb, base, files, changes, "").offer(e); err != nil {
 				return 1, err
@@ -310,6 +322,7 @@ func runArgs(rest []string) []string {
 func cmdRequests(e env, args []string) (int, error) {
 	fs := newFlags("requests", e.stderr)
 	sandbox := fs.String("sandbox", "", "sandbox name (default: the latest running one for this folder)")
+	all := fs.Bool("all", false, "also list the drafts the sandbox made from refused connections")
 	if _, err := parse(fs, args); err != nil {
 		return 1, err
 	}
@@ -344,18 +357,69 @@ func cmdRequests(e env, args []string) (int, error) {
 		u.Blank()
 		return 0, nil
 	}
-	u.Title(plural(len(list), "request waiting", "requests waiting"), sb.Name)
+	var filed map[string]bool
+	if log, err := client().LogLines(e.ctx, sb.Name, 2000); err == nil {
+		filed = openshell.AgentFiled(log)
+	}
+	var asked, drafts []openshell.Proposal
 	for _, p := range list {
-		showRequest(u, p)
+		if filed[p.Chunk] || !p.Drafted() {
+			asked = append(asked, p)
+		} else {
+			drafts = append(drafts, p)
+		}
+	}
+	shown := asked
+	if *all {
+		shown = append(append([]openshell.Proposal(nil), asked...), drafts...)
 	}
 	flag := ""
 	if *sandbox != "" {
 		flag = " --sandbox " + sb.Name
 	}
-	if !u.Interactive() {
-		u.Commands([2]string{"boundlane approve <id>" + flag, "let it through"}, [2]string{`boundlane deny <id> --reason "..."` + flag, "refuse; the agent sees the reason"})
+	hidden := len(drafts) > 0 && !*all
+	allHint := [2]string{"boundlane requests --all" + flag, "list the drafts too"}
+	draftNote := func() {
+		if hidden {
+			u.Note(plural(len(drafts), "more was", "more were") + " drafted by the sandbox from refused connections, not asked for by the agent: " + destinations(drafts) + ".")
+			u.Blank()
+		}
+	}
+	if len(shown) == 0 {
+		u.Blank()
+		u.Done("No requests from the agent", "waiting in "+sb.Name)
+		draftNote()
+		u.Commands(allHint)
 		u.Blank()
 		return 0, nil
+	}
+	if len(asked) > 0 {
+		u.Title(plural(len(asked), "request from the agent", "requests from the agent"), sb.Name)
+		for _, p := range asked {
+			showRequest(u, p)
+		}
+	}
+	if *all && len(drafts) > 0 {
+		u.Title(plural(len(drafts), "draft from refused connections", "drafts from refused connections"), sb.Name)
+		u.Note("The sandbox wrote these when a connection was refused. The agent did not ask for them.")
+		u.Blank()
+		for _, p := range drafts {
+			showRequest(u, p)
+		}
+	}
+	draftNote()
+	list = shown
+	if !u.Interactive() {
+		hints := [][2]string{{"boundlane approve <id>" + flag, "let it through"}, {`boundlane deny <id> --reason "..."` + flag, "refuse; the agent sees the reason"}}
+		if hidden {
+			hints = append(hints, allHint)
+		}
+		u.Commands(hints...)
+		u.Blank()
+		return 0, nil
+	}
+	if hidden {
+		u.Commands(allHint)
 	}
 	for _, p := range list {
 		id := shortID(p.Chunk)
@@ -401,6 +465,24 @@ func cmdRequests(e env, args []string) (int, error) {
 }
 
 func shortID(id string) string { return id[:min(8, len(id))] }
+
+// destinations names the hosts of a few requests, for a one-line summary.
+func destinations(list []openshell.Proposal) string {
+	var hosts []string
+	seen := map[string]bool{}
+	for _, p := range list {
+		d := p.Destination()
+		if d == "" || seen[d] {
+			continue
+		}
+		seen[d] = true
+		hosts = append(hosts, d)
+	}
+	if len(hosts) > 3 {
+		hosts = append(hosts[:3], fmt.Sprintf("%d others", len(hosts)-3))
+	}
+	return strings.Join(hosts, ", ")
+}
 
 func showRequest(u *tui.UI, p openshell.Proposal) {
 	u.Println(fmt.Sprintf("    %s  %s", u.Bold(shortID(p.Chunk)), p.Destination()))
@@ -634,7 +716,10 @@ func staged(e env, name string) (config.Sandbox, workspace.Manifest, string, []w
 	}
 	files := filepath.Join(dir, "files")
 	if _, err := os.Stat(files); err != nil {
-		return sb, nil, "", nil, fmt.Errorf("nothing staged for %s; the agent may still be running", sb.Name)
+		if sb.Running {
+			return sb, nil, "", nil, fmt.Errorf("nothing staged for %s; boundlane stop %s brings back what the agent changed", sb.Name, sb.Name)
+		}
+		return sb, nil, "", nil, fmt.Errorf("nothing staged for %s; its changes were applied", sb.Name)
 	}
 	changes, err := workspace.Changes(base, files, workspace.GitFilter(sb.Repo))
 	return sb, base, files, changes, err

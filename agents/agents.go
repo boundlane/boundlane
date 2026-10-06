@@ -42,6 +42,10 @@ type Entry struct {
 	Env map[string]string `yaml:"env"`
 	// Args go before the guide and the user's arguments. Non-secret values only.
 	Args []string `yaml:"args"`
+	// DefaultFlags are added after Args unless the user passes the same flag.
+	DefaultFlags map[string]string `yaml:"default_flags"`
+	// StartNote is printed just before the agent starts.
+	StartNote string `yaml:"start_note"`
 	// GuideFlag is the agent's flag that appends text to its instructions.
 	// GuideConfig is the config key that does it, for agents that take
 	// `-c key=<TOML value>` instead. GuideFile is a path in the sandbox where
@@ -129,7 +133,7 @@ func load(dir string) (Entry, error) {
 // Argv is the command started in the sandbox: the agent, its fixed
 // arguments, the guide, then the user's arguments.
 func (e Entry) Argv(args []string) []string {
-	argv := append([]string{e.Command}, e.Args...)
+	argv := e.head(args)
 	switch {
 	case e.GuideFlag != "":
 		argv = append(argv, e.GuideFlag, Guide)
@@ -137,6 +141,36 @@ func (e Entry) Argv(args []string) []string {
 		argv = append(argv, "-c", e.GuideConfig+"="+tomlString(Guide))
 	}
 	return append(argv, args...)
+}
+
+// CommandLine is Argv without the guide text, for showing what starts.
+func (e Entry) CommandLine(args []string) []string {
+	return append(e.head(args), args...)
+}
+
+// head is the command, Args, and the default flags the user did not pass.
+func (e Entry) head(args []string) []string {
+	argv := append([]string{e.Command}, e.Args...)
+	flags := make([]string, 0, len(e.DefaultFlags))
+	for f := range e.DefaultFlags {
+		flags = append(flags, f)
+	}
+	sort.Strings(flags)
+	for _, f := range flags {
+		if !hasFlag(args, f) {
+			argv = append(argv, f, e.DefaultFlags[f])
+		}
+	}
+	return argv
+}
+
+func hasFlag(args []string, flag string) bool {
+	for _, a := range args {
+		if a == flag || strings.HasPrefix(a, flag+"=") {
+			return true
+		}
+	}
+	return false
 }
 
 // HasGuide reports whether the guide is passed to the agent.

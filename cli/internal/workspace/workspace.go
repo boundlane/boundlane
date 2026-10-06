@@ -140,6 +140,28 @@ func Apply(root, staged string, changes []Change) error {
 	return nil
 }
 
+// Applied is base with changes taken from staged: what the sandbox and root
+// both hold once Apply has run. It becomes the snapshot for a sandbox that
+// keeps running, so its next copy is compared against what was applied.
+func Applied(base Manifest, staged string, changes []Change) (Manifest, error) {
+	next := make(Manifest, len(base))
+	for rel, sum := range base {
+		next[rel] = sum
+	}
+	for _, c := range changes {
+		if c.Kind == Deleted {
+			delete(next, c.Path)
+			continue
+		}
+		sum, err := hashFile(filepath.Join(staged, filepath.FromSlash(c.Path)))
+		if err != nil {
+			return nil, err
+		}
+		next[c.Path] = sum
+	}
+	return next, nil
+}
+
 // Save and Load keep the snapshot next to the staged copy between runs.
 func (m Manifest) Save(path string) error {
 	b, err := json.MarshalIndent(m, "", "  ")

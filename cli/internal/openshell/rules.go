@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"fmt"
+	"regexp"
 	"strings"
 )
 
@@ -65,6 +66,36 @@ func ParseRules(out []byte) []Proposal {
 		}
 	}
 	return list
+}
+
+// agentFiled matches the sandbox log line OpenShell 0.1.2 writes when the
+// agent submits a proposal through policy.local:
+//
+//	CONFIG:PROPOSED [INFO] agent_authored proposal chunk:fad7c2ed-… on host:443 HEAD / by /usr/bin/curl
+//
+// Drafts the supervisor makes from refusals are logged only as "Flushed
+// denial analysis", without a chunk id.
+var agentFiled = regexp.MustCompile(`CONFIG:PROPOSED .*agent_authored proposal chunk:([0-9a-f-]+)`)
+
+// AgentFiled returns the chunk ids the sandbox log shows the agent filed.
+func AgentFiled(log []byte) map[string]bool {
+	ids := map[string]bool{}
+	for _, m := range agentFiled.FindAllSubmatch(log, -1) {
+		ids[string(m[1])] = true
+	}
+	return ids
+}
+
+// drafted is the rationale 0.1.2 writes on a draft made from a refusal:
+// "Allow curl to connect to github.com:443 (HTTPS)."
+var drafted = regexp.MustCompile(`^Allow \S+ to connect to \S+:\d+( \([^)]*\))?\.$`)
+
+// Drafted reports whether p reads like a draft the supervisor made from a
+// refused connection: no rationale, or the generated one. A request the
+// agent files carries its own intent_summary. The log is the surer sign,
+// but a long-running sandbox's log no longer has the early lines.
+func (p Proposal) Drafted() bool {
+	return p.Rationale == "" || drafted.MatchString(p.Rationale)
 }
 
 // Destination is the first host:port in Endpoints.

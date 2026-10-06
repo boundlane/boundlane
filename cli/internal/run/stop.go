@@ -33,8 +33,10 @@ func Stop(ctx context.Context, d Deps, sb config.Sandbox) ([]workspace.Change, e
 	staging := d.Dirs.Staging(sb.Name)
 	base, err := workspace.Load(filepath.Join(staging, "base.json"))
 	switch {
-	case errors.Is(err, fs.ErrNotExist) || sb.Repo == "":
+	case sb.Repo == "":
 		say("changes", "not copied; this sandbox was not started by boundlane run")
+	case errors.Is(err, fs.ErrNotExist):
+		say("changes", "not copied; the snapshot of %s taken before upload is missing", sb.Repo)
 	case err != nil:
 		return nil, err
 	default:
@@ -63,6 +65,16 @@ func Stop(ctx context.Context, d Deps, sb config.Sandbox) ([]workspace.Change, e
 		return changes, err
 	}
 	markStopped(d.Dirs, sb.Name)
+	dropEmptyStaging(d.Dirs, sb.Name)
 	say("sandbox", "%s, deleted", sb.Name)
 	return changes, nil
+}
+
+// dropEmptyStaging removes a deleted sandbox's staging folder when no copy
+// is left in it to apply.
+func dropEmptyStaging(dirs config.Dirs, name string) {
+	dir := dirs.Staging(name)
+	if _, err := os.Stat(filepath.Join(dir, "files")); errors.Is(err, fs.ErrNotExist) {
+		_ = os.RemoveAll(dir)
+	}
 }

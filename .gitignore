@@ -1,0 +1,4 @@
+/bin/
+/dist/
+/controlplane
+.DS_Store

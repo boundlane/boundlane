@@ -1,0 +1,11 @@
+version: 1
+name: review-only
+workspace: read-only
+hosts:
+  - host: api.github.com
+    access: read-only
+  - host: internal.example.com
+    port: 8443
+    access: read-write
+    allow:
+      - POST /v1/reviews

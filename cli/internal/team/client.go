@@ -1,0 +1,313 @@
+//go:build team
+
+// Package team is the CLI's client for the local Team server.
+package team
+
+import (
+	"bytes"
+	"context"
+	"encoding/base64"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"net/http"
+	"time"
+
+	"boundlane/controlplane"
+)
+
+// DefaultServer is the local Team server.
+const DefaultServer = "http://127.0.0.1:8787"
+
+// ErrNotEnrolled means this machine has not signed in.
+var ErrNotEnrolled = errors.New("not signed in")
+
+// ErrPending means the browser has not approved the code yet.
+var ErrPending = errors.New("authorization pending")
+
+// Client talks to one Team server.
+type Client struct {
+	Base string
+	HTTP *http.Client
+}
+
+func (c Client) base() string {
+	if c.Base == "" {
+		return DefaultServer
+	}
+	return c.Base
+}
+
+func (c Client) http() *http.Client {
+	if c.HTTP != nil {
+		return c.HTTP
+	}
+	return http.DefaultClient
+}
+
+// Start is the beginning of a device login.
+type Start struct {
+	DeviceCode      string `json:"device_code"`
+	UserCode        string `json:"user_code"`
+	VerificationURL string `json:"verification_url"`
+	Interval        int    `json:"interval"`
+}
+
+// Enrollment is what this machine keeps after login. The token never leaves it.
+type Enrollment struct {
+	Server    string `json:"server"`
+	Token     string `json:"token"`
+	Email     string `json:"email"`
+	Name      string `json:"name"`
+	Tenant    string `json:"tenant"`
+	Machine   string `json:"machine"`
+	Admin     bool   `json:"admin"`
+	PublicKey string `json:"public_key"`
+	Revision  int    `json:"revision"`
+	Document  string `json:"document,omitempty"`
+	Published string `json:"published,omitempty"`
+	Signature string `json:"signature,omitempty"`
+}
+
+func (c Client) StartDevice(ctx context.Context, machine string) (Start, error) {
+	var out Start
+	err := c.call(ctx, http.MethodPost, "/v1/device/start", "", map[string]string{"machine": machine}, &out)
+	return out, err
+}
+
+func (c Client) Exchange(ctx context.Context, deviceCode string) (Enrollment, error) {
+	var raw struct {
+		Token     string          `json:"token"`
+		Email     string          `json:"email"`
+		Name      string          `json:"name"`
+		Tenant    string          `json:"tenant"`
+		Machine   string          `json:"machine"`
+		Admin     bool            `json:"admin"`
+		PublicKey string          `json:"public_key"`
+		Error     string          `json:"error"`
+		Bundle    json.RawMessage `json:"bundle"`
+	}
+	err := c.call(ctx, http.MethodPost, "/v1/device/token", "", map[string]string{"device_code": deviceCode}, &raw)
+	if err != nil {
+		return Enrollment{}, err
+	}
+	if raw.Error == "authorization_pending" {
+		return Enrollment{}, ErrPending
+	}
+	en := Enrollment{
+		Server: c.base(), Token: raw.Token, Email: raw.Email, Name: raw.Name,
+		Tenant: raw.Tenant, Machine: raw.Machine, Admin: raw.Admin, PublicKey: raw.PublicKey,
+	}
+	if len(raw.Bundle) > 0 && string(raw.Bundle) != "null" {
+		if err := en.applyBundle(raw.Bundle); err != nil {
+			return Enrollment{}, err
+		}
+	}
+	return en, nil
+}
+
+// Take stores a newer verified bundle. The same revision is left as it is.
+// An older revision is refused.
+func (e *Enrollment) Take(b controlplane.Bundle) error {
+	pub, err := base64.StdEncoding.DecodeString(e.PublicKey)
+	if err != nil {
+		return err
+	}
+	if err := controlplane.Verify(pub, b); err != nil {
+		return err
+	}
+	if e.Revision > 0 && b.Revision < e.Revision {
+		return fmt.Errorf("revision %d is older than %d", b.Revision, e.Revision)
+	}
+	if b.Revision == e.Revision {
+		return nil
+	}
+	e.Revision = b.Revision
+	e.Document = string(b.Document)
+	e.Published = b.Published.UTC().Format(time.RFC3339Nano)
+	e.Signature = base64.StdEncoding.EncodeToString(b.Signature)
+	return nil
+}
+
+// Policy fetches the current signed bundle. A 404 means nothing is published.
+func (c Client) Policy(ctx context.Context, token string) (controlplane.Bundle, bool, error) {
+	var raw json.RawMessage
+	status, err := c.callStatus(ctx, http.MethodGet, "/v1/policy", token, nil, &raw)
+	if status == http.StatusNotFound {
+		return controlplane.Bundle{}, false, nil
+	}
+	if err != nil {
+		return controlplane.Bundle{}, false, err
+	}
+	b, err := controlplane.ParseBundle(raw)
+	return b, err == nil, err
+}
+
+// Publish sends an org policy. The server proves it before it stores it.
+func (c Client) Publish(ctx context.Context, token, document string) (controlplane.Bundle, error) {
+	var raw json.RawMessage
+	err := c.call(ctx, http.MethodPost, "/v1/revisions", token, map[string]string{"document": document}, &raw)
+	if err != nil {
+		return controlplane.Bundle{}, err
+	}
+	return controlplane.ParseBundle(raw)
+}
+
+// Ingest posts decision records. The count is how many were new.
+func (c Client) Ingest(ctx context.Context, token string, records any) (int, error) {
+	var out struct {
+		Stored int `json:"stored"`
+	}
+	err := c.call(ctx, http.MethodPost, "/v1/decisions", token, map[string]any{"records": records}, &out)
+	return out.Stored, err
+}
+
+// PutProposals reports pending requests for one sandbox.
+func (c Client) PutProposals(ctx context.Context, token, sandbox string, proposals any) error {
+	return c.call(ctx, http.MethodPost, "/v1/proposals", token, map[string]any{"sandbox": sandbox, "proposals": proposals}, nil)
+}
+
+// Applies lists reviews this machine still has to send to OpenShell.
+func (c Client) Applies(ctx context.Context, token string) ([]controlplane.Proposal, error) {
+	var out struct {
+		Applies []controlplane.Proposal `json:"applies"`
+	}
+	err := c.call(ctx, http.MethodGet, "/v1/applies", token, nil, &out)
+	return out.Applies, err
+}
+
+// ReleaseReview returns a review OpenShell refused. pending sends it back to the console.
+func (c Client) ReleaseReview(ctx context.Context, token string, id int, pending bool) error {
+	return c.call(ctx, http.MethodPost, fmt.Sprintf("/v1/proposals/%d/release", id), token, map[string]bool{"pending": pending}, nil)
+}
+
+// MarkApplied tells the server the review was sent to OpenShell.
+func (c Client) MarkApplied(ctx context.Context, token string, id int) error {
+	return c.call(ctx, http.MethodPost, fmt.Sprintf("/v1/applies/%d", id), token, map[string]any{}, nil)
+}
+
+// Revision fetches one signed revision.
+func (c Client) Revision(ctx context.Context, token string, n int) (controlplane.Bundle, error) {
+	var raw json.RawMessage
+	if err := c.call(ctx, http.MethodGet, fmt.Sprintf("/v1/revisions/%d", n), token, nil, &raw); err != nil {
+		return controlplane.Bundle{}, err
+	}
+	return controlplane.ParseBundle(raw)
+}
+
+// Heartbeat tells the server what this machine is running.
+func (c Client) Heartbeat(ctx context.Context, token, version, driver string, revision int) error {
+	_, err := c.callStatus(ctx, http.MethodPost, "/v1/heartbeat", token, map[string]any{
+		"openshell_version": version, "driver": driver, "policy_revision": revision,
+	}, nil)
+	return err
+}
+
+func (e *Enrollment) applyBundle(raw []byte) error {
+	b, err := controlplane.ParseBundle(raw)
+	if err != nil {
+		return err
+	}
+	return e.Take(b)
+}
+
+// Bundle rebuilds the signed policy and checks the signature.
+func (e Enrollment) Bundle() (controlplane.Bundle, error) {
+	if e.Revision == 0 || e.Document == "" {
+		return controlplane.Bundle{}, errors.New("no team policy cached")
+	}
+	raw, err := json.Marshal(struct {
+		Tenant    string `json:"tenant"`
+		Revision  int    `json:"revision"`
+		Document  string `json:"document"`
+		Published string `json:"published"`
+		Signature string `json:"signature"`
+	}{e.Tenant, e.Revision, e.Document, e.Published, e.Signature})
+	if err != nil {
+		return controlplane.Bundle{}, err
+	}
+	b, err := controlplane.ParseBundle(raw)
+	if err != nil {
+		return controlplane.Bundle{}, err
+	}
+	pub, err := base64.StdEncoding.DecodeString(e.PublicKey)
+	if err != nil {
+		return controlplane.Bundle{}, err
+	}
+	if err := controlplane.Verify(pub, b); err != nil {
+		return controlplane.Bundle{}, err
+	}
+	return b, nil
+}
+
+type httpError struct {
+	Status int
+	Body   string
+}
+
+func (e *httpError) Error() string {
+	if e.Body == "" {
+		return fmt.Sprintf("team server returned %d", e.Status)
+	}
+	return stringsTrim(e.Body)
+}
+
+func stringsTrim(s string) string {
+	if len(s) > 300 {
+		s = s[:300]
+	}
+	return s
+}
+
+func (c Client) call(ctx context.Context, method, path, token string, body, dst any) error {
+	_, err := c.callStatus(ctx, method, path, token, body, dst)
+	return err
+}
+
+func (c Client) callStatus(ctx context.Context, method, path, token string, body, dst any) (int, error) {
+	var rdr io.Reader
+	if body != nil {
+		b, err := json.Marshal(body)
+		if err != nil {
+			return 0, err
+		}
+		rdr = bytes.NewReader(b)
+	}
+	req, err := http.NewRequestWithContext(ctx, method, c.base()+path, rdr)
+	if err != nil {
+		return 0, err
+	}
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	res, err := c.http().Do(req)
+	if err != nil {
+		return 0, err
+	}
+	defer res.Body.Close()
+	raw, _ := io.ReadAll(io.LimitReader(res.Body, 1<<20))
+	if res.StatusCode == http.StatusNoContent {
+		return res.StatusCode, nil
+	}
+	if res.StatusCode >= 300 {
+		var pending struct {
+			Error string `json:"error"`
+		}
+		_ = json.Unmarshal(raw, &pending)
+		if pending.Error == "authorization_pending" {
+			return res.StatusCode, ErrPending
+		}
+		msg := stringsTrim(string(raw))
+		return res.StatusCode, &httpError{Status: res.StatusCode, Body: msg}
+	}
+	if dst != nil && len(raw) > 0 {
+		if err := json.Unmarshal(raw, dst); err != nil {
+			return res.StatusCode, err
+		}
+	}
+	return res.StatusCode, nil
+}

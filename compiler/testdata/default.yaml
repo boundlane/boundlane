@@ -1,0 +1,14 @@
+version: 1
+name: developer-default
+agents: [claude, codex, grok, opencode]
+workspace: read-write
+hosts:
+  - host: api.github.com
+    access: read-only
+  - host: registry.npmjs.org
+    access: read-only
+  - host: pypi.org
+    access: read-only
+  - host: files.pythonhosted.org
+    access: read-only
+approvals: person

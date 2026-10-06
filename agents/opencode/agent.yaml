@@ -1,0 +1,43 @@
+name: opencode
+display: OpenCode
+command: opencode
+image: boundlane/opencode
+# Bump together with OPENCODE_VERSION in the Dockerfile.
+version: "1.18.34"
+# The npm opencode command is a native program. postinstall copies the build
+# for this machine's architecture onto bin/opencode.exe, and OpenShell matches
+# that path (readlink -f of /usr/local/bin/opencode, arm64 image).
+binaries:
+  - /usr/local/lib/node_modules/opencode-ai/bin/opencode.exe
+# The endpoints of profile.yaml. OpenCode can talk to many model providers.
+# This entry uses Anthropic, which is the provider it picks when
+# ANTHROPIC_API_KEY is set (opencode run, 1.18.34, no --model).
+model:
+  - host: api.anthropic.com
+    port: 443
+    protocol: rest
+    access: read-write
+    enforcement: enforce
+# Packages checked in the opencode repo at tag v1.18.34 on 6 October 2026:
+# packages/core/src/flag/flag.ts and packages/core/src/v1/config/config.ts.
+# The switches turn off the update check, the model-catalog refresh from
+# models.opencode.ai, language-server downloads, and the default plugins.
+# The image also carries a lockfile so OpenCode does not install its plugin
+# package from the npm registry on startup.
+# The config limits OpenCode to the Anthropic provider, turns sharing off,
+# and points instructions at the guide file run writes.
+env:
+  OPENCODE_DISABLE_AUTOUPDATE: "1"
+  OPENCODE_DISABLE_MODELS_FETCH: "1"
+  OPENCODE_DISABLE_LSP_DOWNLOAD: "1"
+  OPENCODE_DISABLE_DEFAULT_PLUGINS: "1"
+  OPENCODE_CONFIG_CONTENT: '{"autoupdate":false,"share":"disabled","enabled_providers":["anthropic"],"instructions":["/sandbox/.boundlane/guide.md"]}'
+# OpenCode loads extra instructions from files named in its config. It has no
+# flag that appends text.
+guide_file: /sandbox/.boundlane/guide.md
+key:
+  env: ANTHROPIC_API_KEY
+  profile_type: boundlane-opencode
+  profile_file: profile.yaml
+status: testing
+verified: false

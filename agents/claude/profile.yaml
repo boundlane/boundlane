@@ -1,0 +1,28 @@
+# Reviewed copy of providers/claude-code.yaml from OpenShell v0.1.2 (Apache-2.0).
+# Changes from upstream, reviewed 3 October 2026:
+#   - binaries name the real path in the boundlane/claude image. OpenShell
+#     matches the kernel-resolved path, not the /usr/local/bin/claude symlink.
+#   - statsig.anthropic.com and sentry.io (telemetry, error reporting) removed.
+#     Only the model API is reachable with the key.
+#   - id changed so it cannot collide with an organization's own claude-code.
+id: boundlane-claude-code
+display_name: Claude Code (Boundlane)
+description: Claude Code CLI in the boundlane/claude image
+category: agent
+inference_capable: true
+credentials:
+  - name: api_key
+    description: Anthropic API key used by Claude Code
+    env_vars: [ANTHROPIC_API_KEY, CLAUDE_API_KEY]
+    required: true
+    auth_style: header
+    header_name: x-api-key
+discovery:
+  credentials: [api_key]
+endpoints:
+  - host: api.anthropic.com
+    port: 443
+    protocol: rest
+    access: read-write
+    enforcement: enforce
+binaries: [/usr/local/lib/node_modules/@anthropic-ai/claude-code/bin/claude.exe]

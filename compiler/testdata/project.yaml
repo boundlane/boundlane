@@ -1,0 +1,11 @@
+version: 1
+hosts:
+  - host: api.stripe.com
+    access: read-only
+  - host: api.github.com
+    access: read-write
+    allow:
+      - GET /repos/acme/web/**
+      - POST /repos/acme/web/pulls
+paths:
+  read_only: [/opt/fixtures]

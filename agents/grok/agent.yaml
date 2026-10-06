@@ -1,0 +1,41 @@
+name: grok
+display: Grok
+command: grok
+image: boundlane/grok
+# Bump together with GROK_VERSION in the Dockerfile. npm dist-tag latest
+# on 6 October 2026. The alpha tag was 1.0.49 and is not pinned.
+version: "1.0.46"
+# /usr/local/bin/grok is a symlink to bin/grok, which is a symlink to
+# bin/grok-native. That file is the ELF (arm64 image, readlink -f). The
+# package's postinstall can also copy a versioned binary under $GROK_HOME/bin.
+# `grok --version` ran grok-native and did not create that copy.
+binaries:
+  - /usr/local/lib/node_modules/@xai-official/grok/bin/grok-native
+# The endpoints of profile.yaml. docs.x.ai names api.x.ai for API-key auth.
+# The inference proxy at cli-chat-proxy.grok.com is the browser-login path.
+model:
+  - host: api.x.ai
+    port: 443
+    protocol: rest
+    access: read-write
+    enforcement: enforce
+# docs.x.ai/build/settings/reference, checked 6 October 2026 for the
+# settings that exist. The updater would call x.ai. The sandbox profile
+# defaults to off; set it so a later default change does not try to apply
+# Landlock inside this sandbox. Web fetch, memory, subagents, and the crash
+# report default off; set them so they stay off.
+env:
+  GROK_DISABLE_AUTOUPDATER: "1"
+  GROK_SANDBOX: "off"
+  GROK_WEB_FETCH: "0"
+  GROK_MEMORY: "0"
+  GROK_SUBAGENTS: "0"
+  GROK_CRASH_HANDLER: "0"
+# "Extra rules appended to the system prompt" (docs.x.ai/build/cli/reference).
+guide_flag: --rules
+key:
+  env: XAI_API_KEY
+  profile_type: boundlane-grok
+  profile_file: profile.yaml
+status: testing
+verified: false

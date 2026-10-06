@@ -1,0 +1,41 @@
+name: claude
+display: Claude Code
+command: claude
+image: boundlane/claude
+# Bump together with CLAUDE_CODE_VERSION in the Dockerfile.
+version: "2.1.288"
+# The npm package's claude command is a native binary. OpenShell matches the
+# kernel-resolved path, so this is the target of /usr/local/bin/claude
+# (readlink -f in the image). Tools the agent starts inherit its rules.
+binaries:
+  - /usr/local/lib/node_modules/@anthropic-ai/claude-code/bin/claude.exe
+# The endpoints of profile.yaml. The provider adds them to the effective
+# policy; the boundary must contain them in the same form.
+model:
+  - host: api.anthropic.com
+    port: 443
+    protocol: rest
+    access: read-write
+    enforcement: enforce
+# First-run setup checks api.anthropic.com and platform.claude.com and exits
+# if either fails (code.claude.com/docs/en/errors, "Unable to connect to
+# Anthropic services"). Seen in the first real run: ECONNREFUSED on
+# platform.claude.com. Read-only, and the key is never sent there.
+hosts:
+  - host: platform.claude.com
+    port: 443
+# Documented in code.claude.com/docs/en/env-vars: turns off auto-updates,
+# telemetry, error reporting, and the release notes fetch from
+# raw.githubusercontent.com, which would otherwise file a request every run.
+env:
+  CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1"
+# code.claude.com/docs/en/cli-reference: "Append custom text to the end of the
+# default system prompt".
+guide_flag: --append-system-prompt
+key:
+  env: ANTHROPIC_API_KEY
+  profile_type: boundlane-claude-code
+  profile_file: profile.yaml
+# testing until a full run with a real key passes on macOS and Linux.
+status: testing
+verified: false

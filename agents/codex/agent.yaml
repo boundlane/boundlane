@@ -1,0 +1,70 @@
+name: codex
+display: Codex
+command: codex
+image: boundlane/codex
+# Bump together with CODEX_VERSION in the Dockerfile.
+version: "0.160.1"
+# The npm codex command is a Node launcher that starts a native program for
+# the machine's architecture. That program connects, and OpenShell matches its
+# kernel-resolved path. One path per architecture; an image only has its own.
+binaries:
+  - /usr/local/lib/node_modules/@openai/codex/node_modules/@openai/codex-linux-arm64/vendor/aarch64-unknown-linux-musl/bin/codex
+  - /usr/local/lib/node_modules/@openai/codex/node_modules/@openai/codex-linux-x64/vendor/x86_64-unknown-linux-musl/bin/codex
+# The endpoints of profile.yaml.
+model:
+  - host: api.openai.com
+    port: 443
+    protocol: rest
+    access: read-write
+    enforcement: enforce
+# developers.openai.com/codex/config-reference. Codex's built-in provider
+# ignores OPENAI_API_KEY unless `codex login` stored it; a provider with
+# env_key sends it as a bearer header, which is what profile.yaml injects.
+# The rest turns off the update check, analytics, feedback uploads, and the
+# plugin and connector catalogs. The first sandboxed run fetched the plugin
+# catalog from api.github.com, codeload.github.com and github.com, and called
+# chatgpt.com, on every start.
+#
+# A sandbox runs one session, so the shared background server has nothing to
+# share. Without --no-daemon the TUI warns on every start that the -c
+# overrides need embedded mode.
+args:
+  - --no-daemon
+  - --disable
+  - plugins
+  - --disable
+  - remote_plugin
+  - --disable
+  - apps
+  - -c
+  - model_provider="boundlane"
+  - -c
+  - model_providers.boundlane={name="OpenAI", base_url="https://api.openai.com/v1", env_key="OPENAI_API_KEY", supports_websockets=false}
+  # Codex's own sandbox is bubblewrap, which cannot create namespaces inside an
+  # OpenShell sandbox ("bwrap: No permissions to create a new namespace"), so
+  # every command would fail. OpenShell's filesystem, process and network
+  # policy apply to every command either way. The warning says Codex can
+  # change the whole computer, which is not true here, and HOME is new on each
+  # run, so it would show every time.
+  - -c
+  - sandbox_mode="danger-full-access"
+  - -c
+  - notice.hide_full_access_warning=true
+  # Full access would also switch web search from "cached" to "live". Keep
+  # Codex's usual default.
+  - -c
+  - web_search="cached"
+  - -c
+  - check_for_update_on_startup=false
+  - -c
+  - analytics.enabled=false
+  - -c
+  - feedback.enabled=false
+# "Additional developer instructions injected into the session".
+guide_config: developer_instructions
+key:
+  env: OPENAI_API_KEY
+  profile_type: boundlane-codex
+  profile_file: profile.yaml
+status: testing
+verified: false

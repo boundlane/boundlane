@@ -1,0 +1,30 @@
+# Reviewed copy of providers/anthropic.yaml from OpenShell v0.1.2 (Apache-2.0).
+# OpenShell 0.1.2 has no OpenCode profile. OpenCode 1.18.34 reads
+# ANTHROPIC_API_KEY and calls api.anthropic.com, which is this profile's shape.
+# Changes from upstream, reviewed 6 October 2026:
+#   - binaries name the real path in the boundlane/opencode image. The npm
+#     opencode command is that native program; postinstall copies it to
+#     bin/opencode.exe on every architecture.
+#   - id changed so it cannot collide with an organization's own anthropic,
+#     or with boundlane-claude-code.
+id: boundlane-opencode
+display_name: OpenCode (Boundlane)
+description: OpenCode CLI in the boundlane/opencode image, with an Anthropic API key
+category: agent
+inference_capable: true
+credentials:
+  - name: api_key
+    description: Anthropic API key used by OpenCode
+    env_vars: [ANTHROPIC_API_KEY]
+    required: true
+    auth_style: header
+    header_name: x-api-key
+discovery:
+  credentials: [api_key]
+endpoints:
+  - host: api.anthropic.com
+    port: 443
+    protocol: rest
+    access: read-write
+    enforcement: enforce
+binaries: [/usr/local/lib/node_modules/opencode-ai/bin/opencode.exe]
